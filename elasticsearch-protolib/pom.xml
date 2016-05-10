@@ -125,7 +125,6 @@
       <version>${httpclient.version}</version>
       <scope>compile</scope>
     </dependency>
-
   </dependencies>
 
   <build>

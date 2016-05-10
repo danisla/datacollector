@@ -28,6 +28,7 @@ import com.streamsets.pipeline.api.base.BaseTarget;
 import com.streamsets.pipeline.api.el.ELEval;
 import com.streamsets.pipeline.api.el.ELEvalException;
 import com.streamsets.pipeline.api.el.ELVars;
+import com.streamsets.pipeline.api.Field;
 import com.streamsets.pipeline.api.impl.Utils;
 import com.streamsets.pipeline.config.JsonMode;
 import com.streamsets.pipeline.elasticsearch.api.ElasticSearchFactory;
@@ -48,6 +49,7 @@ import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.script.Script;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -57,8 +59,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -75,6 +79,7 @@ public class ElasticSearchTarget extends BaseTarget {
   private ELEval indexEval;
   private ELEval typeEval;
   private ELEval docIdEval;
+  private ELEval scriptParamValueEval;
   private DataGeneratorFactory generatorFactory;
   private Client elasticClient;
 
@@ -109,6 +114,7 @@ public class ElasticSearchTarget extends BaseTarget {
     typeEval = getContext().createELEval("typeTemplate");
     docIdEval = getContext().createELEval("docIdTemplate");
     timeDriverEval = getContext().createELEval("timeDriver");
+    scriptParamValueEval = getContext().createELEval("scriptParams");
 
     //validate timeDriver
     try {
@@ -369,10 +375,28 @@ public class ElasticSearchTarget extends BaseTarget {
           // but only headers and then pass content to the right shard. To extract the right shard,
           // Elasticsearch needs to know the id without parsing the body itself.
           Utils.checkNotNull(id, "Document ID");
-          UpdateRequest upsert = elasticClient.prepareUpdate(index, type, id)
+          UpdateRequest upsert;
+          if (!conf.upsertScript.isEmpty()) {
+            Map<String, Object> scriptParamsEval = new HashMap<String,Object>();
+
+            // Evaluate and deserialize script parameters.
+            for (String key : conf.scriptParams.keySet()) {
+              Object paramValue = scriptParamValueEval.eval(elVars, conf.scriptParams.get(key), Object.class);
+              scriptParamsEval.put(key, deserializeNestedELeval(paramValue));
+            }
+
+            Script script = new Script(conf.upsertScript, conf.scriptType, conf.scriptLanguage.toLowerCase(), scriptParamsEval);
+            upsert = elasticClient.prepareUpdate(index, type, id)
+              .setScriptedUpsert(true)
+              .setScript(script)
+              .setUpsert(insert)
+              .request();
+          } else {
+            upsert = elasticClient.prepareUpdate(index, type, id)
               .setDoc(json)
               .setUpsert(insert)
               .request();
+          }
           bulkRequest.add(upsert);
         } else {
           bulkRequest.add(insert);
@@ -417,6 +441,29 @@ public class ElasticSearchTarget extends BaseTarget {
                                                          getContext().getOnErrorRecord()));
         }
       }
+    }
+  }
+
+  // Recursive method to deserialize a nested data structure containing Field objects to their native types.
+  // The ELEval evaluator does not recurse the evaluated fields and the ElasticSearch Transport Client needs native types.
+  protected Object deserializeNestedELeval(Object input) {
+    if (input instanceof List) {
+      List<Object> newList = new ArrayList<Object>();
+      for (Object o : (List)input) {
+        newList.add(deserializeNestedELeval(o));
+      }
+      return newList;
+    } else if (input instanceof Map) {
+      Map<Object,Object> newMap = new HashMap<Object,Object>();
+      Map<Object,Field> fmap = (HashMap<Object,Field>)input;
+      for (Object key : fmap.keySet()) {
+        newMap.put(key, deserializeNestedELeval(fmap.get(key)));
+      }
+      return newMap;
+    } else if (input instanceof Field) {
+      return deserializeNestedELeval(((Field)input).getValue());
+    } else {
+      return input;
     }
   }
 

@@ -23,19 +23,29 @@ import com.streamsets.pipeline.api.GenerateResourceBundle;
 import com.streamsets.pipeline.api.Label;
 
 @GenerateResourceBundle
-public enum Groups implements Label {
-  ELASTIC_SEARCH("Elasticsearch"),
-  SHIELD("Shield"),
-  SCRIPTED_UPSERT("Scripted Upsert"),
+public enum UpsertScriptLanguage implements Label {
+  GROOVY("groovy", "groovy"),
+  EXPRESSION("expression", "expression"),
+  MUSTACHE("mustache", "mustache"),
+  JAVASCRIPT("javascript", "javascript"),
+  PYTHON("python", "python")
   ;
 
   private final String label;
-  Groups(String label) {
+  private final String languageName;
+
+  UpsertScriptLanguage(String label, String languageName) {
     this.label = label;
+    this.languageName = languageName;
   }
 
   @Override
   public String getLabel() {
     return label;
   }
+
+  public String getLanguageName() {
+    return languageName;
+  }
+
 }
