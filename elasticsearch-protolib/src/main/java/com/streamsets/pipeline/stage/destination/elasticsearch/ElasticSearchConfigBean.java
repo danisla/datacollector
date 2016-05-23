@@ -208,7 +208,7 @@ public class ElasticSearchConfigBean {
       required = false,
       type = ConfigDef.Type.STRING,
       label = "Script ID/Inline/File",
-      defaultValue = "my_custom_script",
+      defaultValue = "",
       description = "An expression which evaluates to the ID of a stored script, the content of an inline script or the filename of a script.",
       dependsOn = "upsert",
       triggeredByValue = "true",
