@@ -48,6 +48,7 @@ import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.xcontent.XContentType;
@@ -350,6 +351,26 @@ public class ElasticSearchTarget extends BaseTarget {
                     Errors.ELASTICSEARCH_30,
                     "indexed",
                     node.getNode().getHostName()
+                )
+            );
+          }
+        }
+
+        if (issues.isEmpty() && conf.scriptType.equals(ScriptService.ScriptType.INDEXED)) {
+          // Verify indexed script exists
+          GetIndexedScriptResponse script_res = elasticClient.prepareGetIndexedScript()
+              .setScriptLang(conf.scriptLanguage.toLowerCase())
+              .setId(conf.upsertScript)
+              .execute().actionGet();
+
+          if (! script_res.isExists()) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    ElasticSearchConfigBean.CONF_PREFIX + "upsertScript",
+                    Errors.ELASTICSEARCH_31,
+                    conf.scriptLanguage.toLowerCase(),
+                    conf.upsertScript
                 )
             );
           }

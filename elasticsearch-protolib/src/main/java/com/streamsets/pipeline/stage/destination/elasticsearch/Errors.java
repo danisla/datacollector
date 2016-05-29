@@ -50,6 +50,7 @@ public enum Errors implements ErrorCode {
   ELASTICSEARCH_20("Invalid Shield user, it must be <USERNAME>:<PASSWORD>: '{}'"),
 
   ELASTICSEARCH_30("Elasticsearch config: 'es.script.{}=true' is not set on data node '{}'"),
+  ELASTICSEARCH_31("Indexed {} script not found: '{}'"),
   ;
   private final String msg;
 
