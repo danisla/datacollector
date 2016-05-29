@@ -42,6 +42,8 @@ import com.streamsets.pipeline.lib.generator.DataGeneratorFormat;
 import org.apache.http.client.fluent.Request;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest;
+import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
+import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
@@ -50,6 +52,7 @@ import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.script.Script;
+import org.elasticsearch.script.ScriptService;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -248,6 +251,18 @@ public class ElasticSearchTarget extends BaseTarget {
               )
           );
         }
+
+        if (clientVersion.major < 2 && conf.upsert && !conf.upsertScript.isEmpty()) {
+          issues.add(
+              getContext().createConfigIssue(
+                  Groups.ELASTIC_SEARCH.name(),
+                  null,
+                  Errors.ELASTICSEARCH_14,
+                  clientVersion,
+                  clusterVersion
+              )
+          );
+        }
       }
     } catch (IOException e) {
       issues.add(
@@ -281,6 +296,66 @@ public class ElasticSearchTarget extends BaseTarget {
           conf.useFound
       );
       elasticClient.admin().cluster().health(new ClusterHealthRequest());
+
+      if (conf.upsert && !conf.upsertScript.isEmpty()) {
+
+        NodesInfoResponse resp = elasticClient.admin().cluster().prepareNodesInfo().setSettings((true)).get();
+        for (NodeInfo node : resp.getNodes()) {
+
+          if (!node.getNode().dataNode()) continue; // Only need scripting enabled on the data nodes.
+
+          Boolean update_scripts_enabled = node.getSettings().getAsBoolean("script.update", false);
+          Boolean file_scripts_enabled = node.getSettings().getAsBoolean("script.file", false);
+          Boolean inline_scripts_enabled = node.getSettings().getAsBoolean("script.inline", false);
+          Boolean indexed_scripts_enabled = node.getSettings().getAsBoolean("script.indexed", false);
+
+          if (! update_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "update",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.FILE) && ! file_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "file",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.INLINE) && ! inline_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "inline",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.INDEXED) && ! indexed_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "indexed",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+        }
+      }
+
     } catch (RuntimeException|UnknownHostException ex) {
       issues.add(
           getContext().createConfigIssue(
