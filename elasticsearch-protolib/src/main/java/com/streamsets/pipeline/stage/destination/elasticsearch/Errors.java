@@ -38,6 +38,7 @@ public enum Errors implements ErrorCode {
   ELASTICSEARCH_11("Could not connect to the cluster HTTP endpoint: {}"),
   ELASTICSEARCH_12("Could not get the cluster version from HTTP response: {}"),
   ELASTICSEARCH_13("Stage library version '{}' and cluster version '{}' are not compatible"),
+  ELASTICSEARCH_14("Scripted upserts for stage library version '{}' and cluster version '{}' are currently not supported."),
 
   ELASTICSEARCH_15("Could not write record '{}': {}"),
   ELASTICSEARCH_16("Could not index record '{}': {}"),
@@ -47,6 +48,9 @@ public enum Errors implements ErrorCode {
   ELASTICSEARCH_19("Document ID expression must be provided to use the upsert option"),
 
   ELASTICSEARCH_20("Invalid Shield user, it must be <USERNAME>:<PASSWORD>: '{}'"),
+
+  ELASTICSEARCH_30("Elasticsearch config: 'es.script.{}=true' is not set on data node '{}'"),
+  ELASTICSEARCH_31("Indexed {} script not found: '{}'"),
   ;
   private final String msg;
 

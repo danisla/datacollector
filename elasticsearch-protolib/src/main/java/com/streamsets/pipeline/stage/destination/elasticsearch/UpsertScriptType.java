@@ -21,21 +21,30 @@ package com.streamsets.pipeline.stage.destination.elasticsearch;
 
 import com.streamsets.pipeline.api.GenerateResourceBundle;
 import com.streamsets.pipeline.api.Label;
+import org.elasticsearch.script.ScriptService.ScriptType;
 
 @GenerateResourceBundle
-public enum Groups implements Label {
-  ELASTIC_SEARCH("Elasticsearch"),
-  SHIELD("Shield"),
-  SCRIPTED_UPSERT("Scripted Upsert"),
-  ;
+public enum UpsertScriptType implements Label {
+    INDEXED("indexed", ScriptType.INDEXED),
+    INLINE("inline", ScriptType.INLINE),
+    FILE("file", ScriptType.FILE)
+    ;
 
-  private final String label;
-  Groups(String label) {
-    this.label = label;
-  }
+    private final String label;
+    private final ScriptType scriptType;
 
-  @Override
-  public String getLabel() {
-    return label;
-  }
+    UpsertScriptType(String label, ScriptType scriptType) {
+        this.label = label;
+        this.scriptType = scriptType;
+    }
+
+    @Override
+    public String getLabel() {
+        return label;
+    }
+
+    public ScriptType getScriptTypeValue() {
+        return scriptType;
+    }
+
 }
