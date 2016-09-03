@@ -19,23 +19,12 @@
  */
 package com.streamsets.pipeline.stage.destination.elasticsearch;
 
-import com.streamsets.pipeline.api.GenerateResourceBundle;
-import com.streamsets.pipeline.api.Label;
+import com.streamsets.pipeline.api.base.BaseEnumChooserValues;
 
-@GenerateResourceBundle
-public enum Groups implements Label {
-  ELASTIC_SEARCH("Elasticsearch"),
-  SHIELD("Shield"),
-  SCRIPTED_UPSERT("Scripted Upsert"),
-  ;
+public class UpsertScriptLanguageChooserValues extends BaseEnumChooserValues {
 
-  private final String label;
-  Groups(String label) {
-    this.label = label;
+  public UpsertScriptLanguageChooserValues() {
+    super(UpsertScriptLanguage.class);
   }
 
-  @Override
-  public String getLabel() {
-    return label;
-  }
 }

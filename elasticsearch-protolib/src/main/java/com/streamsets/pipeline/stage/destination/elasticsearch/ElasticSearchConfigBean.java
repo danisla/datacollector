@@ -28,6 +28,7 @@ import com.streamsets.pipeline.lib.el.DataUtilEL;
 import com.streamsets.pipeline.lib.el.RecordEL;
 import com.streamsets.pipeline.lib.el.TimeEL;
 import com.streamsets.pipeline.lib.el.TimeNowEL;
+import org.elasticsearch.script.ScriptService.ScriptType;
 
 import java.util.List;
 import java.util.Map;
@@ -202,4 +203,61 @@ public class ElasticSearchConfigBean {
       group = "ELASTIC_SEARCH"
   )
   public boolean upsert;
+
+  @ConfigDef(
+      required = false,
+      type = ConfigDef.Type.STRING,
+      label = "Script ID/Inline/File",
+      defaultValue = "",
+      description = "An expression which evaluates to the ID of a stored script, the content of an inline script or the filename of a script.",
+      dependsOn = "upsert",
+      triggeredByValue = "true",
+      displayPosition = 10,
+      group = "SCRIPTED_UPSERT",
+      elDefs = {RecordEL.class, DataUtilEL.class},
+      evaluation = ConfigDef.Evaluation.EXPLICIT
+  )
+  public String upsertScript;
+
+  @ConfigDef(
+          required = false,
+          type = ConfigDef.Type.MODEL,
+          defaultValue = "INDEXED",
+          description = "The type of script to run. Make sure script.inline, script.indexed, script.file are set to 'true' in your ElasticSearch config.",
+          label = "Script Type",
+          dependsOn = "upsert",
+          triggeredByValue = "true",
+          displayPosition = 20,
+          group = "SCRIPTED_UPSERT"
+  )
+  @ValueChooserModel(UpsertScriptTypeChooserValues.class)
+  public ScriptType scriptType;
+
+  @ConfigDef(
+      required = false,
+      type = ConfigDef.Type.MODEL,
+      defaultValue = "GROOVY",
+      label = "Script Language",
+      dependsOn = "upsert",
+      triggeredByValue = "true",
+      displayPosition = 30,
+      group = "SCRIPTED_UPSERT"
+  )
+  @ValueChooserModel(UpsertScriptLanguageChooserValues.class)
+  public String scriptLanguage;
+
+  @ConfigDef(
+      required = false,
+      type = ConfigDef.Type.MAP,
+      defaultValue = "{ }",
+      label = "Script Parameters",
+      dependsOn = "upsert",
+      description = "Parameter names and expressions that evaluate to values passed to the script as parameters",
+      triggeredByValue = "true",
+      displayPosition = 40,
+      group = "SCRIPTED_UPSERT",
+      elDefs = {RecordEL.class, DataUtilEL.class},
+      evaluation = ConfigDef.Evaluation.EXPLICIT
+  )
+  public Map<String, String> scriptParams;
 }

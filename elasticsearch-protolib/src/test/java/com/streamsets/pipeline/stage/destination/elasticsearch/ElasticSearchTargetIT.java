@@ -37,6 +37,7 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeBuilder;
+import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.SearchHit;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -44,6 +45,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -61,6 +63,13 @@ public class ElasticSearchTargetIT {
   private static Node esServer;
   private static int esPort;
   private static int esHttpPort;
+
+  private static int getRandomPort() throws Exception {
+    ServerSocket ss = new ServerSocket(0);
+    int port = ss.getLocalPort();
+    ss.close();
+    return port;
+  }
 
   @BeforeClass
   @SuppressWarnings("unchecked")
@@ -182,6 +191,10 @@ public class ElasticSearchTargetIT {
     conf.upsert = upsert;
     conf.useShield = false;
     conf.shieldConfigBean = new ShieldConfigBean();
+    conf.upsertScript = "";
+    conf.scriptType = ScriptService.ScriptType.INDEXED;
+    conf.scriptLanguage = "groovy";
+    conf.scriptParams = Collections.EMPTY_MAP;
 
     return new ElasticSearchTarget(conf);
   }
@@ -499,6 +512,10 @@ public class ElasticSearchTargetIT {
     conf.upsert = true; // enable upsert
     conf.useShield = false;
     conf.shieldConfigBean = new ShieldConfigBean();
+    conf.upsertScript = "";
+    conf.scriptType = ScriptService.ScriptType.INDEXED;
+    conf.scriptLanguage = "groovy";
+    conf.scriptParams = Collections.EMPTY_MAP;
 
     ElasticSearchTarget target = new ElasticSearchTarget(conf);
     TargetRunner runner = new TargetRunner.Builder(ElasticSearchDTarget.class, target).build();
@@ -547,4 +564,195 @@ public class ElasticSearchTargetIT {
     }
   }
 
+  @Test
+  public void testScriptedUpsertConfigUpdateError() throws Exception {
+    esServer.close();
+
+    File esDir = new File("target", UUID.randomUUID().toString());
+    Map<String, Object> configs = new HashMap<>();
+    configs.put("cluster.name", esName);
+    configs.put("http.enabled", true);
+    configs.put("http.port", esHttpPort);
+    configs.put("transport.tcp.port", esPort);
+    configs.put("path.home", esDir.getAbsolutePath());
+    configs.put("path.conf", esDir.getAbsolutePath());
+    configs.put("path.data", esDir.getAbsolutePath());
+    configs.put("path.logs", esDir.getAbsolutePath());
+    configs.put("script.update", false);
+    configs.put("script.inline", false);
+    configs.put("script.file", false);
+    configs.put("script.indexed", false);
+
+    esServer = NodeBuilder.nodeBuilder().settings(ElasticSearchFactory.settings(configs)).build();
+    esServer.start();
+
+    ElasticSearchConfigBean conf = new ElasticSearchConfigBean();
+    conf.clusterName = esName;
+    conf.uris = ImmutableList.of("127.0.0.1:" + esPort);
+    conf.httpUri = "127.0.0.1:" + esHttpPort;
+    conf.configs = Collections.EMPTY_MAP;
+    conf.timeDriver = "${time:now()}";
+    conf.timeZoneID = "UTC";
+    conf.indexTemplate = "${YYYY()}";
+    conf.typeTemplate = "${record:value('/type')}";
+    conf.docIdTemplate = "${record:value('/index')}"; // Use the index field as document ID.
+    conf.charset = "UTF-8";
+    conf.upsert = true; // enable upsert
+    conf.useShield = false;
+    conf.shieldConfigBean = new ShieldConfigBean();
+    conf.upsertScript = "ctx._source.counter += 2";
+    conf.scriptLanguage = "groovy";
+    conf.scriptParams = Collections.EMPTY_MAP;
+
+    // Verify error when es.script.update is not set.
+    conf.scriptType = ScriptService.ScriptType.INLINE;
+    ElasticSearchTarget target = new ElasticSearchTarget(conf);
+    TargetRunner runner = new TargetRunner.Builder(ElasticSearchDTarget.class, target).build();
+    List<Stage.ConfigIssue> issues = runner.runValidateConfigs();
+    Assert.assertEquals(2, issues.size());
+    Assert.assertTrue(issues.get(0).toString().contains(Errors.ELASTICSEARCH_30.name()));
+    Assert.assertTrue(issues.get(0).toString().contains("es.script.update"));
+    Assert.assertTrue(issues.get(1).toString().contains(Errors.ELASTICSEARCH_30.name()));
+    Assert.assertTrue(issues.get(1).toString().contains("es.script.inline"));
+  }
+
+  @Test
+  public void testScriptedUpsertScriptTypeErrors() throws Exception {
+    esServer.close();
+
+    File esDir = new File("target", UUID.randomUUID().toString());
+    Map<String, Object> configs = new HashMap<>();
+    configs.put("cluster.name", esName);
+    configs.put("http.enabled", true);
+    configs.put("http.port", esHttpPort);
+    configs.put("transport.tcp.port", esPort);
+    configs.put("path.home", esDir.getAbsolutePath());
+    configs.put("path.conf", esDir.getAbsolutePath());
+    configs.put("path.data", esDir.getAbsolutePath());
+    configs.put("path.logs", esDir.getAbsolutePath());
+    configs.put("script.update", true);
+    configs.put("script.inline", false);
+    configs.put("script.file", false);
+    configs.put("script.indexed", false);
+
+    esServer = NodeBuilder.nodeBuilder().settings(ElasticSearchFactory.settings(configs)).build();
+    esServer.start();
+
+    ElasticSearchConfigBean conf = new ElasticSearchConfigBean();
+    conf.clusterName = esName;
+    conf.uris = ImmutableList.of("127.0.0.1:" + esPort);
+    conf.httpUri = "127.0.0.1:" + esHttpPort;
+    conf.configs = Collections.EMPTY_MAP;
+    conf.timeDriver = "${time:now()}";
+    conf.timeZoneID = "UTC";
+    conf.indexTemplate = "${YYYY()}";
+    conf.typeTemplate = "${record:value('/type')}";
+    conf.docIdTemplate = "${record:value('/index')}"; // Use the index field as document ID.
+    conf.charset = "UTF-8";
+    conf.upsert = true; // enable upsert
+    conf.useShield = false;
+    conf.shieldConfigBean = new ShieldConfigBean();
+    conf.upsertScript = "ctx._source.counter += 2";
+    conf.scriptLanguage = "groovy";
+    conf.scriptParams = Collections.EMPTY_MAP;
+
+    // Test verify error for all script types.
+    for (ScriptService.ScriptType t : ScriptService.ScriptType.values()) {
+      conf.scriptType = t;
+      ElasticSearchTarget target = new ElasticSearchTarget(conf);
+      TargetRunner runner = new TargetRunner.Builder(ElasticSearchDTarget.class, target).build();
+      List<Stage.ConfigIssue> issues = runner.runValidateConfigs();
+      Assert.assertEquals(1, issues.size());
+      Assert.assertTrue(issues.get(0).toString().contains(Errors.ELASTICSEARCH_30.name()));
+      Assert.assertTrue(issues.get(0).toString().contains("es.script." + t.toString().toLowerCase()));
+    }
+  }
+
+  @Test
+  public void testScriptedUpsertInline() throws Exception {
+    esServer.close();
+
+    File esDir = new File("target", UUID.randomUUID().toString());
+    Map<String, Object> configs = new HashMap<>();
+    configs.put("cluster.name", esName);
+    configs.put("http.enabled", true);
+    configs.put("http.port", esHttpPort);
+    configs.put("transport.tcp.port", esPort);
+    configs.put("path.home", esDir.getAbsolutePath());
+    configs.put("path.conf", esDir.getAbsolutePath());
+    configs.put("path.data", esDir.getAbsolutePath());
+    configs.put("path.logs", esDir.getAbsolutePath());
+    configs.put("script.update", true);
+    configs.put("script.inline", true);
+    configs.put("script.file", true);
+    configs.put("script.indexed", true);
+
+    esServer = NodeBuilder.nodeBuilder().settings(ElasticSearchFactory.settings(configs)).build();
+    esServer.start();
+
+    ElasticSearchConfigBean conf = new ElasticSearchConfigBean();
+    conf.clusterName = esName;
+    conf.uris = ImmutableList.of("127.0.0.1:" + esPort);
+    conf.httpUri = "127.0.0.1:" + esHttpPort;
+    conf.configs = Collections.EMPTY_MAP;
+    conf.timeDriver = "${time:now()}";
+    conf.timeZoneID = "UTC";
+    conf.indexTemplate = "${record:value('/index')}";
+    conf.typeTemplate = "${record:value('/type')}";
+    conf.docIdTemplate = "${record:value('/docid')}";
+    conf.charset = "UTF-8";
+    conf.upsert = true;
+    conf.useShield = false;
+    conf.shieldConfigBean = new ShieldConfigBean();
+    conf.upsertScript = "ctx._source.counter += count"; // inline script
+    conf.scriptType = ScriptService.ScriptType.INLINE;
+    conf.scriptLanguage = "groovy";
+    conf.scriptParams = new HashMap<>();
+    conf.scriptParams.put("count", "${2}");
+
+    ElasticSearchTarget target = new ElasticSearchTarget(conf);
+    TargetRunner runner = new TargetRunner.Builder(ElasticSearchDTarget.class, target).build();
+    List<Stage.ConfigIssue> issues = runner.runValidateConfigs();
+    Assert.assertEquals(0, issues.size());
+
+    try {
+      runner.runInit();
+      List<Record> records = new ArrayList<>();
+      Record record = RecordCreator.create();
+      record.set(
+          Field.create(
+              ImmutableMap.of(
+                  "docid", Field.create("doc1"),
+                  "index", Field.create("j"),
+                  "counter", Field.create(0),
+                  "type", Field.create("t")
+              )
+          )
+      );
+
+      records.add(record);
+      runner.runWrite(records);
+      Assert.assertTrue(runner.getErrorRecords().isEmpty());
+      Assert.assertTrue(runner.getErrors().isEmpty());
+
+      prepareElasticSearchServerForQueries();
+
+      // Record count field should increment by 2.
+      Set<Map> expected = new HashSet<>();
+      expected.add(ImmutableMap.of("counter", 2, "index", "j", "type", "t"));
+
+      SearchResponse response = esServer.client().prepareSearch("j").setTypes("t")
+              .setSearchType(SearchType.DEFAULT).execute().actionGet();
+      SearchHit[] hits = response.getHits().getHits();
+      Assert.assertEquals(1, hits.length);
+      Set<Map> got = new HashSet<>();
+      got.add(hits[0].getSource());
+
+      Assert.assertEquals(expected, got);
+
+    } finally {
+      runner.runDestroy();
+    }
+
+  }
 }

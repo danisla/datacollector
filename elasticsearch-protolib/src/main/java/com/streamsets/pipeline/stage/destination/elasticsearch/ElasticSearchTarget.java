@@ -29,6 +29,7 @@ import com.streamsets.pipeline.api.base.OnRecordErrorException;
 import com.streamsets.pipeline.api.el.ELEval;
 import com.streamsets.pipeline.api.el.ELEvalException;
 import com.streamsets.pipeline.api.el.ELVars;
+import com.streamsets.pipeline.api.Field;
 import com.streamsets.pipeline.api.impl.Utils;
 import com.streamsets.pipeline.config.JsonMode;
 import com.streamsets.pipeline.elasticsearch.api.ElasticSearchFactory;
@@ -44,14 +45,19 @@ import com.streamsets.pipeline.stage.common.ErrorRecordHandler;
 import org.apache.http.client.fluent.Request;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest;
+import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
+import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
 import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Base64;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.script.Script;
+import org.elasticsearch.script.ScriptService;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -61,8 +67,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -79,6 +87,7 @@ public class ElasticSearchTarget extends BaseTarget {
   private ELEval indexEval;
   private ELEval typeEval;
   private ELEval docIdEval;
+  private ELEval scriptParamValueEval;
   private DataGeneratorFactory generatorFactory;
   private ErrorRecordHandler errorRecordHandler;
   private Client elasticClient;
@@ -115,6 +124,7 @@ public class ElasticSearchTarget extends BaseTarget {
     typeEval = getContext().createELEval("typeTemplate");
     docIdEval = getContext().createELEval("docIdTemplate");
     timeDriverEval = getContext().createELEval("timeDriver");
+    scriptParamValueEval = getContext().createELEval("scriptParams");
 
     //validate timeDriver
     try {
@@ -260,6 +270,18 @@ public class ElasticSearchTarget extends BaseTarget {
               )
           );
         }
+
+        if (clientVersion.major < 2 && conf.upsert && !conf.upsertScript.isEmpty()) {
+          issues.add(
+              getContext().createConfigIssue(
+                  Groups.ELASTIC_SEARCH.name(),
+                  null,
+                  Errors.ELASTICSEARCH_14,
+                  clientVersion,
+                  clusterVersion
+              )
+          );
+        }
       }
     } catch (IOException e) {
       issues.add(
@@ -293,6 +315,86 @@ public class ElasticSearchTarget extends BaseTarget {
           conf.useElasticCloud
       );
       elasticClient.admin().cluster().health(new ClusterHealthRequest());
+
+      if (conf.upsert && !conf.upsertScript.isEmpty()) {
+
+        NodesInfoResponse resp = elasticClient.admin().cluster().prepareNodesInfo().setSettings((true)).get();
+        for (NodeInfo node : resp.getNodes()) {
+
+          if (!node.getNode().dataNode()) continue; // Only need scripting enabled on the data nodes.
+
+          Boolean update_scripts_enabled = node.getSettings().getAsBoolean("script.update", false);
+          Boolean file_scripts_enabled = node.getSettings().getAsBoolean("script.file", false);
+          Boolean inline_scripts_enabled = node.getSettings().getAsBoolean("script.inline", false);
+          Boolean indexed_scripts_enabled = node.getSettings().getAsBoolean("script.indexed", false);
+
+          if (! update_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "update",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.FILE) && ! file_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "file",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.INLINE) && ! inline_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "inline",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+          if (conf.scriptType.equals(ScriptService.ScriptType.INDEXED) && ! indexed_scripts_enabled) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    null,
+                    Errors.ELASTICSEARCH_30,
+                    "indexed",
+                    node.getNode().getHostName()
+                )
+            );
+          }
+        }
+
+        if (issues.isEmpty() && conf.scriptType.equals(ScriptService.ScriptType.INDEXED)) {
+          // Verify indexed script exists
+          GetIndexedScriptResponse script_res = elasticClient.prepareGetIndexedScript()
+              .setScriptLang(conf.scriptLanguage.toLowerCase())
+              .setId(conf.upsertScript)
+              .execute().actionGet();
+
+          if (! script_res.isExists()) {
+            issues.add(
+                getContext().createConfigIssue(
+                    Groups.SCRIPTED_UPSERT.name(),
+                    ElasticSearchConfigBean.CONF_PREFIX + "upsertScript",
+                    Errors.ELASTICSEARCH_31,
+                    conf.scriptLanguage.toLowerCase(),
+                    conf.upsertScript
+                )
+            );
+          }
+        }
+      }
+
     } catch (RuntimeException|UnknownHostException ex) {
       issues.add(
           getContext().createConfigIssue(
@@ -387,10 +489,28 @@ public class ElasticSearchTarget extends BaseTarget {
           // but only headers and then pass content to the right shard. To extract the right shard,
           // Elasticsearch needs to know the id without parsing the body itself.
           Utils.checkNotNull(id, "Document ID");
-          UpdateRequest upsert = elasticClient.prepareUpdate(index, type, id)
+          UpdateRequest upsert;
+          if (!conf.upsertScript.isEmpty()) {
+            Map<String, Object> scriptParamsEval = new HashMap<String,Object>();
+
+            // Evaluate and deserialize script parameters.
+            for (String key : conf.scriptParams.keySet()) {
+              Object paramValue = scriptParamValueEval.eval(elVars, conf.scriptParams.get(key), Object.class);
+              scriptParamsEval.put(key, deserializeNestedELeval(paramValue));
+            }
+
+            Script script = new Script(conf.upsertScript, conf.scriptType, conf.scriptLanguage.toLowerCase(), scriptParamsEval);
+            upsert = elasticClient.prepareUpdate(index, type, id)
+              .setScriptedUpsert(true)
+              .setScript(script)
+              .setUpsert(insert)
+              .request();
+          } else {
+            upsert = elasticClient.prepareUpdate(index, type, id)
               .setDoc(json)
               .setUpsert(insert)
               .request();
+          }
           bulkRequest.add(upsert);
         } else {
           bulkRequest.add(insert);
@@ -432,6 +552,29 @@ public class ElasticSearchTarget extends BaseTarget {
                                                          getContext().getOnErrorRecord()));
         }
       }
+    }
+  }
+
+  // Recursive method to deserialize a nested data structure containing Field objects to their native types.
+  // The ELEval evaluator does not recurse the evaluated fields and the ElasticSearch Transport Client needs native types.
+  protected Object deserializeNestedELeval(Object input) {
+    if (input instanceof List) {
+      List<Object> newList = new ArrayList<Object>();
+      for (Object o : (List)input) {
+        newList.add(deserializeNestedELeval(o));
+      }
+      return newList;
+    } else if (input instanceof Map) {
+      Map<Object,Object> newMap = new HashMap<Object,Object>();
+      Map<Object,Field> fmap = (HashMap<Object,Field>)input;
+      for (Object key : fmap.keySet()) {
+        newMap.put(key, deserializeNestedELeval(fmap.get(key)));
+      }
+      return newMap;
+    } else if (input instanceof Field) {
+      return deserializeNestedELeval(((Field)input).getValue());
+    } else {
+      return input;
     }
   }
 
